@@ -129,7 +129,7 @@ function addExternalReferences(pkg, format = "xml") {
     if (pkg.homepage) {
       externalReferences.push({
         type: "website",
-        url: pkg.homepage,
+        url: pkg.homepage.url,
       });
     }
     if (pkg.bugs && pkg.bugs.url) {
