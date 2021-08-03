@@ -110,9 +110,9 @@ function addMetadata() {
 function addExternalReferences(pkg, format = "xml") {
   let externalReferences = [];
   if (format === "xml") {
-    if (pkg.homepage) {
+    if (pkg.homepage && pkg.homepage.url) {
       externalReferences.push({
-        reference: { "@type": "website", url: pkg.homepage },
+        reference: { "@type": "website", url: pkg.homepage.url },
       });
     }
     if (pkg.bugs && pkg.bugs.url) {
@@ -126,7 +126,7 @@ function addExternalReferences(pkg, format = "xml") {
       });
     }
   } else {
-    if (pkg.homepage) {
+    if (pkg.homepage && pkg.homepage.url) {
       externalReferences.push({
         type: "website",
         url: pkg.homepage.url,
