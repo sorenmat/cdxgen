@@ -56,22 +56,38 @@ const TIMEOUT_MS = process.env.CDXGEN_TIMEOUT_MS || 10 * 60 * 1000;
  * @param pkg
  * @returns {Array}
  */
-function addGlobalReferences(src, filename) {
+function addGlobalReferences(src, filename, format = "xml") {
   let externalReferences = [];
-  externalReferences.push({
-    reference: { "@type": "other", url: src, comment: "Base path" },
-  });
+  if (format === "json") {
+    externalReferences.push({
+      type: "other",
+      url: src,
+      comment: "Base path",
+    });
+  } else {
+    externalReferences.push({
+      reference: { "@type": "other", url: src, comment: "Base path" },
+    });
+  }
   let packageFileMeta = filename;
   if (!filename.includes(src)) {
     packageFileMeta = pathLib.join(src, filename);
   }
-  externalReferences.push({
-    reference: {
-      "@type": "other",
+  if (format === "json") {
+    externalReferences.push({
+      type: "other",
       url: packageFileMeta,
       comment: "Package file",
-    },
-  });
+    });
+  } else {
+    externalReferences.push({
+      reference: {
+        "@type": "other",
+        url: packageFileMeta,
+        comment: "Package file",
+      },
+    });
+  }
   return externalReferences;
 }
 
@@ -79,7 +95,7 @@ function addGlobalReferences(src, filename) {
  * Function to create metadata block
  *
  */
-function addMetadata() {
+function addMetadata(format = "xml") {
   let metadata = {
     timestamp: new Date().toISOString(),
     tools: [
@@ -99,6 +115,18 @@ function addMetadata() {
     supplier: undefined,
     component: undefined,
   };
+  if (format === "json") {
+    metadata.tools = [
+      {
+        vendor: "AppThreat",
+        name: "cdxgen",
+        version: selfPjson.version,
+      },
+    ];
+    metadata.authors = [
+      { name: "Team AppThreat", email: "cloud@appthreat.com" },
+    ];
+  }
   return metadata;
 }
 
@@ -210,16 +238,10 @@ function addComponent(
     );
     let purlString = purl.toString();
     purlString = decodeURIComponent(purlString);
-    let component = {
-      group: group,
-      name: name,
-      version: version,
-
-      hashes: [],
-      licenses: licenses,
-      purl: purlString,
-      externalReferences: addExternalReferences(pkg, format),
-    };
+    let description = { "#cdata": pkg.description };
+    if (format === "json") {
+      description = pkg.description || "";
+    }
     let compScope = pkg.scope;
     if (allImports) {
       const impPkgs = Object.keys(allImports);
@@ -235,17 +257,23 @@ function addComponent(
         compScope = "optional";
       }
     }
-    if (compScope) {
-      component["scope"] = compScope;
-    }
+    let component = {
+      group,
+      name,
+      version,
+      description,
+      scope: compScope,
+      hashes: [],
+      licenses,
+      purl: purlString,
+      externalReferences: addExternalReferences(pkg, format),
+    };
     if (format === "xml") {
       component["@type"] = determinePackageType(pkg);
       component["@bom-ref"] = purlString;
-      component["description"] = { "#cdata": pkg.description };
     } else {
       component["type"] = determinePackageType(pkg);
       component["bom-ref"] = purlString;
-      component["description"] = pkg.description;
     }
     if (
       component.externalReferences === undefined ||
@@ -369,17 +397,17 @@ function addComponentHash(alg, digest, component, format = "xml") {
 const buildBomXml = (serialNum, components, context) => {
   const bom = builder
     .create("bom", { encoding: "utf-8", separateArrayItems: true })
-    .att("xmlns", "http://cyclonedx.org/schema/bom/1.2");
+    .att("xmlns", "http://cyclonedx.org/schema/bom/1.3");
   bom.att("serialNumber", serialNum);
   bom.att("version", 1);
-  const metadata = addMetadata();
+  const metadata = addMetadata("xml");
   bom.ele("metadata").ele(metadata);
   if (components && components.length) {
     bom.ele("components").ele(components);
     if (context && context.src && context.filename) {
       bom
         .ele("externalReferences")
-        .ele(addGlobalReferences(context.src, context.filename));
+        .ele(addGlobalReferences(context.src, context.filename, "xml"));
     }
     const bomString = bom.end({
       pretty: true,
@@ -421,15 +449,22 @@ const buildBomNSData = (pkgInfo, ptype, context) => {
   const components = listComponents(allImports, pkgInfo, ptype, "xml");
   if (components && components.length) {
     const bomString = buildBomXml(serialNum, components, context);
-    // CycloneDX 1.2 Json Template
+    // CycloneDX 1.3 Json Template
     const jsonTpl = {
       bomFormat: "CycloneDX",
-      specVersion: "1.2",
+      specVersion: "1.3",
       serialNumber: serialNum,
       version: 1,
       metadata: metadata,
       components: listComponents(allImports, pkgInfo, ptype, "json"),
     };
+    if (context && context.src && context.filename) {
+      jsonTpl.externalReferences = addGlobalReferences(
+        context.src,
+        context.filename,
+        "json"
+      );
+    }
     bomNSData.bomXml = bomString;
     bomNSData.bomJson = jsonTpl;
     bomNSData.nsMapping = nsMapping;
