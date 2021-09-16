@@ -549,7 +549,7 @@ const createJavaBom = async (path, options) => {
     const pomFiles = utils.getAllFiles(path, "pom.xml");
     if (pomFiles && pomFiles.length) {
       let mvnArgs = [
-        "org.cyclonedx:cyclonedx-maven-plugin:2.4.0:makeAggregateBom",
+        "org.cyclonedx:cyclonedx-maven-plugin:2.5.3:makeAggregateBom",
       ];
       // Support for passing additional settings and profile to maven
       if (process.env.MVN_ARGS) {
@@ -1703,7 +1703,7 @@ const createMultiXBom = async (pathList, options) => {
     bomXml: buildBomXml(serialNum, components),
     bomJson: {
       bomFormat: "CycloneDX",
-      specVersion: "1.2",
+      specVersion: "1.3",
       serialNumber: serialNum,
       version: 1,
       metadata: addMetadata(),
