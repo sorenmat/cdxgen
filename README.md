@@ -1,21 +1,20 @@
 # CycloneDX Generator
 
-This script creates a valid CycloneDX Software Bill-of-Materials (SBOM) containing an aggregate of all project dependencies for node.js, php, python, ruby, rust, java, .Net and Go projects in XML and JSON format. CycloneDX 1.2 is a lightweight SBOM specification that is easily created, human and machine readable, and simple to parse.
+This script creates a valid and compliant CycloneDX Software Bill-of-Materials (SBOM) containing an aggregate of all project dependencies for node.js, php, python, ruby, rust, java, .Net and Go projects in XML and JSON format. CycloneDX 1.3 is a lightweight SBOM specification that is easily created, human and machine readable, and simple to parse.
 
 ## Supported languages and package format
 
-| Language           | Package format                                                         |
-| ------------------ | ---------------------------------------------------------------------- |
-| node.js            | package-lock.json, pnpm-lock.yaml, yarn.lock, rush.js                  |
-| java               | maven (pom.xml [1]), gradle (build.gradle, .kts), scala (sbt)          |
-| php                | composer.lock                                                          |
-| python             | setup.py, requirements.txt [2], Pipfile.lock, poetry.lock, bdist_wheel |
-| go                 | go.mod, go.sum, Gopkg.lock                                             |
-| ruby               | Gemfile.lock, gemspec                                                  |
-| rust               | Cargo.toml, Cargo.lock                                                 |
-| .Net Framework     | .csproj, packages.config                                               |
-| .Net core          | .csproj, packages.config                                               |
-| docker / oci image | All supported languages excluding OS packages                          |
+| Language           | Package format                                                               |
+| ------------------ | ---------------------------------------------------------------------------- |
+| node.js            | package-lock.json, pnpm-lock.yaml, yarn.lock, rush.js                        |
+| java               | maven (pom.xml [1]), gradle (build.gradle, .kts), scala (sbt)                |
+| php                | composer.lock                                                                |
+| python             | setup.py, requirements.txt [2], Pipfile.lock, poetry.lock, bdist_wheel, .whl |
+| go                 | binary, go.mod, go.sum, Gopkg.lock                                           |
+| ruby               | Gemfile.lock, gemspec                                                        |
+| rust               | Cargo.toml, Cargo.lock                                                       |
+| .Net               | .csproj, packages.config, project.assets.json, packages.lock.json            |
+| docker / oci image | All supported languages excluding OS packages                                |
 
 NOTE:
 
@@ -149,18 +148,19 @@ export FETCH_LICENSE=true
 
 ## Environment variables
 
-| Variable          | Description                                                                                                        |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------ |
-| SCAN_DEBUG_MODE   | Set to debug to enable debug messages                                                                              |
-| GITHUB_TOKEN      | Specify GitHub token to prevent traffic shaping while querying license and repo information                        |
-| MVN_CMD           | Set to override maven command                                                                                      |
-| MVN_ARGS          | Set to pass additional arguments such as profile or settings to maven                                              |
-| MAVEN_HOME        | Specify maven home                                                                                                 |
-| GRADLE_CACHE_DIR  | Specify gradle cache directory. Useful for class name resolving                                                    |
-| SBT_CACHE_DIR     | Specify sbt cache directory. Useful for class name resolving                                                       |
-| FETCH_LICENSE     | Set to true to fetch license information from the registry. npm and golang only                                    |
-| USE_GOSUM         | Set to true to generate BOMs for golang projects using go.sum as the dependency source of truth, instead of go.mod |
-| CDXGEN_TIMEOUT_MS | Default timeout for known execution involving maven, gradle or sbt                                                 |
+| Variable                  | Description                                                                                                        |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| SCAN_DEBUG_MODE           | Set to debug to enable debug messages                                                                              |
+| GITHUB_TOKEN              | Specify GitHub token to prevent traffic shaping while querying license and repo information                        |
+| MVN_CMD                   | Set to override maven command                                                                                      |
+| MVN_ARGS                  | Set to pass additional arguments such as profile or settings to maven                                              |
+| MAVEN_HOME                | Specify maven home                                                                                                 |
+| GRADLE_CACHE_DIR          | Specify gradle cache directory. Useful for class name resolving                                                    |
+| GRADLE_MULTI_PROJECT_MODE | Set this variable for gradle multi-project applications. Do not use this with recurse mode.                        |
+| SBT_CACHE_DIR             | Specify sbt cache directory. Useful for class name resolving                                                       |
+| FETCH_LICENSE             | Set to true to fetch license information from the registry. npm and golang only                                    |
+| USE_GOSUM                 | Set to true to generate BOMs for golang projects using go.sum as the dependency source of truth, instead of go.mod |
+| CDXGEN_TIMEOUT_MS         | Default timeout for known execution involving maven, gradle or sbt                                                 |
 
 ## Integration with GitHub action
 
@@ -169,6 +169,10 @@ Use the GitHub [action](https://github.com/AppThreat/cdxgen-action) to automatic
 ## Integration with Google CloudBuild
 
 Use this [custom builder](https://github.com/CloudBuildr/google-custom-builders/tree/master/cdxgen) and refer to the readme for instruction.
+
+## Plugins
+
+The package published on npm would include additional binary executables under the plugins directory. These executables provide functionality that are difficult to implement with node.js alone. Example for this is the `goversion` [plugin](thirdparty/goversion) which helps with module identification for go binaries. The source code for all the plugins would be published inside the [thirdparty](thirdparty) directory.
 
 ## License
 

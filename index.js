@@ -1,6 +1,5 @@
 const parsePackageJsonName = require("parse-packagejson-name");
 const os = require("os");
-const glob = require("glob");
 const pathLib = require("path");
 const fetch = require('node-fetch');
 const ssri = require("ssri");
@@ -14,6 +13,7 @@ const selfPjson = require("./package.json");
 const { findJSImports } = require("./analyzer");
 const semver = require("semver");
 const dockerLib = require("./docker");
+const binaryLib = require("./binary");
 
 // Construct maven command
 let MVN_CMD = "mvn";
@@ -55,22 +55,38 @@ const TIMEOUT_MS = process.env.CDXGEN_TIMEOUT_MS || 10 * 60 * 1000;
  * @param pkg
  * @returns {Array}
  */
-function addGlobalReferences(src, filename) {
+function addGlobalReferences(src, filename, format = "xml") {
   let externalReferences = [];
-  externalReferences.push({
-    reference: { "@type": "other", url: src, comment: "Base path" },
-  });
+  if (format === "json") {
+    externalReferences.push({
+      type: "other",
+      url: src,
+      comment: "Base path",
+    });
+  } else {
+    externalReferences.push({
+      reference: { "@type": "other", url: src, comment: "Base path" },
+    });
+  }
   let packageFileMeta = filename;
   if (!filename.includes(src)) {
     packageFileMeta = pathLib.join(src, filename);
   }
-  externalReferences.push({
-    reference: {
-      "@type": "other",
+  if (format === "json") {
+    externalReferences.push({
+      type: "other",
       url: packageFileMeta,
       comment: "Package file",
-    },
-  });
+    });
+  } else {
+    externalReferences.push({
+      reference: {
+        "@type": "other",
+        url: packageFileMeta,
+        comment: "Package file",
+      },
+    });
+  }
   return externalReferences;
 }
 
@@ -78,7 +94,7 @@ function addGlobalReferences(src, filename) {
  * Function to create metadata block
  *
  */
-function addMetadata() {
+function addMetadata(format = "xml") {
   let metadata = {
     timestamp: new Date().toISOString(),
     tools: [
@@ -98,6 +114,18 @@ function addMetadata() {
     supplier: undefined,
     component: undefined,
   };
+  if (format === "json") {
+    metadata.tools = [
+      {
+        vendor: "AppThreat",
+        name: "cdxgen",
+        version: selfPjson.version,
+      },
+    ];
+    metadata.authors = [
+      { name: "Team AppThreat", email: "cloud@appthreat.com" },
+    ];
+  }
   return metadata;
 }
 
@@ -110,9 +138,9 @@ function addMetadata() {
 function addExternalReferences(pkg, format = "xml") {
   let externalReferences = [];
   if (format === "xml") {
-    if (pkg.homepage) {
+    if (pkg.homepage && pkg.homepage.url) {
       externalReferences.push({
-        reference: { "@type": "website", url: pkg.homepage },
+        reference: { "@type": "website", url: pkg.homepage.url },
       });
     }
     if (pkg.bugs && pkg.bugs.url) {
@@ -126,7 +154,7 @@ function addExternalReferences(pkg, format = "xml") {
       });
     }
   } else {
-    if (pkg.homepage) {
+    if (pkg.homepage && pkg.homepage.url) {
       externalReferences.push({
         type: "website",
         url: pkg.homepage.url,
@@ -209,16 +237,10 @@ function addComponent(
     );
     let purlString = purl.toString();
     purlString = decodeURIComponent(purlString);
-    let component = {
-      group: group,
-      name: name,
-      version: version,
-
-      hashes: [],
-      licenses: licenses,
-      purl: purlString,
-      externalReferences: addExternalReferences(pkg, format),
-    };
+    let description = { "#cdata": pkg.description };
+    if (format === "json") {
+      description = pkg.description || "";
+    }
     let compScope = pkg.scope;
     if (allImports) {
       const impPkgs = Object.keys(allImports);
@@ -234,17 +256,23 @@ function addComponent(
         compScope = "optional";
       }
     }
-    if (compScope) {
-      component["scope"] = compScope;
-    }
+    let component = {
+      group,
+      name,
+      version,
+      description,
+      scope: compScope,
+      hashes: [],
+      licenses,
+      purl: purlString,
+      externalReferences: addExternalReferences(pkg, format),
+    };
     if (format === "xml") {
       component["@type"] = determinePackageType(pkg);
       component["@bom-ref"] = purlString;
-      component["description"] = { "#cdata": pkg.description };
     } else {
       component["type"] = determinePackageType(pkg);
       component["bom-ref"] = purlString;
-      component["description"] = pkg.description;
     }
     if (
       component.externalReferences === undefined ||
@@ -368,18 +396,18 @@ function addComponentHash(alg, digest, component, format = "xml") {
 const buildBomXml = (serialNum, components, context) => {
   const bom = builder
     .create("bom", { encoding: "utf-8", separateArrayItems: true })
-    .att("xmlns", "http://cyclonedx.org/schema/bom/1.2");
+    .att("xmlns", "http://cyclonedx.org/schema/bom/1.3");
   bom.att("serialNumber", serialNum);
   bom.att("version", 1);
-  if (context && context.src && context.filename) {
-    bom
-      .ele("externalReferences")
-      .ele(addGlobalReferences(context.src, context.filename));
-  }
-  const metadata = addMetadata();
+  const metadata = addMetadata("xml");
   bom.ele("metadata").ele(metadata);
   if (components && components.length) {
     bom.ele("components").ele(components);
+    if (context && context.src && context.filename) {
+      bom
+        .ele("externalReferences")
+        .ele(addGlobalReferences(context.src, context.filename, "xml"));
+    }
     const bomString = bom.end({
       pretty: true,
       indent: "  ",
@@ -420,15 +448,22 @@ const buildBomNSData = (pkgInfo, ptype, context) => {
   const components = listComponents(allImports, pkgInfo, ptype, "xml");
   if (components && components.length) {
     const bomString = buildBomXml(serialNum, components, context);
-    // CycloneDX 1.2 Json Template
+    // CycloneDX 1.3 Json Template
     const jsonTpl = {
       bomFormat: "CycloneDX",
-      specVersion: "1.2",
+      specVersion: "1.3",
       serialNumber: serialNum,
       version: 1,
       metadata: metadata,
       components: listComponents(allImports, pkgInfo, ptype, "json"),
     };
+    if (context && context.src && context.filename) {
+      jsonTpl.externalReferences = addGlobalReferences(
+        context.src,
+        context.filename,
+        "json"
+      );
+    }
     bomNSData.bomXml = bomString;
     bomNSData.bomJson = jsonTpl;
     bomNSData.nsMapping = nsMapping;
@@ -513,7 +548,7 @@ const createJavaBom = async (path, options) => {
     const pomFiles = utils.getAllFiles(path, "pom.xml");
     if (pomFiles && pomFiles.length) {
       let mvnArgs = [
-        "org.cyclonedx:cyclonedx-maven-plugin:2.4.0:makeAggregateBom",
+        "org.cyclonedx:cyclonedx-maven-plugin:2.5.3:makeAggregateBom",
       ];
       // Support for passing additional settings and profile to maven
       if (process.env.MVN_ARGS) {
@@ -531,7 +566,7 @@ const createJavaBom = async (path, options) => {
           jarNSMapping = utils.collectMvnDependencies(MVN_CMD, basePath);
         }
         console.log(`Executing '${MVN_CMD} ${mvnArgs.join(" ")}' in`, basePath);
-        result = spawnSync(MVN_CMD, mvnArgs, {
+        let result = spawnSync(MVN_CMD, mvnArgs, {
           cwd: basePath,
           shell: true,
           encoding: "utf-8",
@@ -648,24 +683,114 @@ const createJavaBom = async (path, options) => {
         } catch (e) {}
         GRADLE_CMD = pathLib.join(path, "gradlew");
       }
-      for (let i in gradleFiles) {
-        const f = gradleFiles[i];
-        const basePath = pathLib.dirname(f);
-        console.log("Executing", GRADLE_CMD, "dependencies in", basePath);
+      // Support for multi-project applications
+      if (process.env.GRADLE_MULTI_PROJECT_MODE) {
+        console.log("Executing", GRADLE_CMD, "projects in", path);
         const result = spawnSync(
           GRADLE_CMD,
-          ["dependencies", "-q", "--console", "plain"],
-          { cwd: basePath, encoding: "utf-8", timeout: TIMEOUT_MS }
+          ["projects", "-q", "--console", "plain"],
+          { cwd: path, encoding: "utf-8", timeout: TIMEOUT_MS }
         );
         if (result.status == 1 || result.error) {
           console.error(result.stdout, result.stderr);
+          if (DEBUG_MODE) {
+            console.log(
+              "1. Check if the correct version of java and gradle are installed and available in PATH. For example, some project might require Java 11 with gradle 7."
+            );
+          }
         }
         const stdout = result.stdout;
         if (stdout) {
           const cmdOutput = Buffer.from(stdout).toString();
-          const dlist = utils.parseGradleDep(cmdOutput);
-          if (dlist && dlist.length) {
-            pkgList = pkgList.concat(dlist);
+          const allProjects = utils.parseGradleProjects(cmdOutput);
+          if (!allProjects) {
+            console.log(
+              "No projects found. Is this a gradle multi-project application?"
+            );
+          } else {
+            console.log("Found", allProjects.length, "gradle sub-projects");
+            for (let sp of allProjects) {
+              console.log(
+                "Executing",
+                GRADLE_CMD,
+                sp + ":dependencies in",
+                path
+              );
+              const sresult = spawnSync(
+                GRADLE_CMD,
+                [sp + ":dependencies", "-q", "--console", "plain"],
+                { cwd: path, encoding: "utf-8", timeout: TIMEOUT_MS }
+              );
+              if (sresult.status == 1 || sresult.error) {
+                if (DEBUG_MODE) {
+                  console.error(sresult.stdout, sresult.stderr);
+                }
+              }
+              const sstdout = sresult.stdout;
+              if (sstdout) {
+                const cmdOutput = Buffer.from(sstdout).toString();
+                const dlist = utils.parseGradleDep(cmdOutput);
+                if (dlist && dlist.length) {
+                  if (DEBUG_MODE) {
+                    console.log(
+                      "Found",
+                      dlist.length,
+                      "packages in gradle project",
+                      sp
+                    );
+                  }
+                  pkgList = pkgList.concat(dlist);
+                } else {
+                  if (DEBUG_MODE) {
+                    console.log("No packages were found in gradle project", sp);
+                  }
+                }
+              }
+            }
+            if (pkgList.length) {
+              console.log(
+                "Obtained",
+                pkgList.length,
+                "from this gradle multi-project"
+              );
+            } else {
+              console.log(
+                "No packages found. Unset the environment variable GRADLE_MULTI_PROJECT_MODE and try again."
+              );
+            }
+          }
+        }
+      } else {
+        for (let i in gradleFiles) {
+          const f = gradleFiles[i];
+          const basePath = pathLib.dirname(f);
+          console.log("Executing", GRADLE_CMD, "dependencies in", basePath);
+          const result = spawnSync(
+            GRADLE_CMD,
+            ["dependencies", "-q", "--console", "plain"],
+            { cwd: basePath, encoding: "utf-8", timeout: TIMEOUT_MS }
+          );
+          if (result.status == 1 || result.error) {
+            console.error(result.stdout, result.stderr);
+            if (DEBUG_MODE) {
+              console.log(
+                "1. Check if the correct version of java and gradle are installed and available in PATH. For example, some project might require Java 11 with gradle 7."
+              );
+            }
+          }
+          const stdout = result.stdout;
+          if (stdout) {
+            const cmdOutput = Buffer.from(stdout).toString();
+            const dlist = utils.parseGradleDep(cmdOutput);
+            if (dlist && dlist.length) {
+              pkgList = pkgList.concat(dlist);
+            } else {
+              if (DEBUG_MODE) {
+                console.log(
+                  "No packages were detected. If this is a multi-project gradle application set the environment variable GRADLE_MULTI_PROJECT_MODE to true and try again."
+                );
+              }
+            }
           }
         }
       }
@@ -684,16 +809,47 @@ const createJavaBom = async (path, options) => {
       });
     }
     // scala sbt
-    let sbtFiles = utils.getAllFiles(
+    // Identify sbt projects via its `project` directory:
+    // - all SBT project _should_ define build.properties file with sbt version info
+    // - SBT projects _typically_ have some configs/plugins defined in .sbt files
+    // - SBT projects that are still on 0.13.x, can still use the old approach,
+    //   where configs are defined via Scala files
+    // Detecting one of those should be enough to determine an SBT project.
+    let sbtProjectFiles = utils.getAllFiles(
       path,
-      (options.multiProject ? "**/" : "") + "build.sbt"
+      (options.multiProject ? "**/" : "") +
+        "project/{build.properties,*.sbt,*.scala}"
     );
+
+    let sbtProjects = [];
+    for (let i in sbtProjectFiles) {
+      // parent dir of sbtProjectFile is the `project` directory
+      // parent dir of `project` is the sbt root project directory
+      const baseDir = pathLib.dirname(pathLib.dirname(sbtProjectFiles[i]));
+      sbtProjects = sbtProjects.concat(baseDir);
+    }
+
+    // Fallback in case sbt's project directory is non-existent
+    if (!sbtProjects.length) {
+      sbtProjectFiles = utils.getAllFiles(
+        path,
+        (options.multiProject ? "**/" : "") + "*.sbt"
+      );
+      for (let i in sbtProjectFiles) {
+        const baseDir = pathLib.dirname(sbtProjectFiles[i]);
+        sbtProjects = sbtProjects.concat(baseDir);
+      }
+    }
+
+    sbtProjects = [...new Set(sbtProjects)]; // eliminate duplicates
+
     let sbtLockFiles = utils.getAllFiles(
       path,
       (options.multiProject ? "**/" : "") + "build.sbt.lock"
     );
 
-    if (sbtFiles && sbtFiles.length) {
+    if (sbtProjects && sbtProjects.length) {
+      let pkgList = [];
       // If the project use sbt lock files
       if (sbtLockFiles && sbtLockFiles.length) {
         for (let i in sbtLockFiles) {
@@ -722,9 +878,8 @@ const createJavaBom = async (path, options) => {
         const sbtPluginDefinition = `\naddSbtPlugin("io.shiftleft" % "sbt-dependency-graph" % "0.10.0-append-to-file3")\n`;
         fs.writeFileSync(tempSbtPlugins, sbtPluginDefinition);
 
-        for (let i in sbtFiles) {
-          const f = sbtFiles[i];
-          const basePath = pathLib.dirname(f);
+        for (let i in sbtProjects) {
+          const basePath = sbtProjects[i];
           let dlFile = pathLib.join(tempDir, "dl-" + i + ".tmp");
           console.log(
             "Executing",
@@ -739,15 +894,17 @@ const createJavaBom = async (path, options) => {
           if (standalonePluginFile) {
             sbtArgs = [
               `-addPluginSbtFile=${tempSbtPlugins}`,
-              `dependencyList::toFile "${dlFile}" --append`,
+              `"dependencyList::toFile ${dlFile} --append"`,
             ];
           } else {
             // write to the existing plugins file
-            sbtArgs = [`dependencyList::toFile "${dlFile}" --append`];
+            sbtArgs = [`"dependencyList::toFile ${dlFile} --append"`];
             pluginFile = utils.addPlugin(basePath, sbtPluginDefinition);
           }
+          // Note that the command has to be invoked with `shell: true` to properly execut sbt
           const result = spawnSync(SBT_CMD, sbtArgs, {
             cwd: basePath,
+            shell: true,
             encoding: "utf-8",
             timeout: TIMEOUT_MS,
           });
@@ -803,7 +960,7 @@ const createJavaBom = async (path, options) => {
       }
       return buildBomNSData(pkgList, "maven", {
         src: path,
-        filename: sbtFiles.join(", "),
+        filename: sbtProjects.join(", "),
         nsMapping: jarNSMapping,
       });
     }
@@ -849,7 +1006,7 @@ const createNodejsBom = async (path, options) => {
   if (pnpmLockFiles && pnpmLockFiles.length) {
     for (let i in pnpmLockFiles) {
       const f = pnpmLockFiles[i];
-      const dlist = utils.parsePnpmLock(f);
+      const dlist = await utils.parsePnpmLock(f);
       if (dlist && dlist.length) {
         pkgList = pkgList.concat(dlist);
       }
@@ -879,7 +1036,7 @@ const createNodejsBom = async (path, options) => {
     // Do rush install if we don't have node_modules directory
     if (!fs.existsSync(nmDir)) {
       console.log("Executing 'rush install --no-link'", path);
-      result = spawnSync("rush", ["install", "--no-link", "--bypass-policy"], {
+      spawnSync("rush", ["install", "--no-link", "--bypass-policy"], {
         cwd: path,
         encoding: "utf-8",
       });
@@ -980,10 +1137,15 @@ const createPythonBom = async (path, options) => {
     path,
     (options.multiProject ? "**/site-packages/**/" : "") + "METADATA"
   );
+  const whlFiles = utils.getAllFiles(
+    path,
+    (options.multiProject ? "**/" : "") + "*.whl"
+  );
   const setupPy = pathLib.join(path, "setup.py");
   const requirementsMode =
     (reqFiles && reqFiles.length) || (reqDirFiles && reqDirFiles.length);
   const setupPyMode = fs.existsSync(setupPy);
+  // dist-info directories
   if (metadataFiles && metadataFiles.length) {
     for (let mf of metadataFiles) {
       const mData = fs.readFileSync(mf, {
@@ -997,6 +1159,22 @@ const createPythonBom = async (path, options) => {
     return buildBomNSData(pkgList, "pypi", {
       src: path,
       filename: metadataFiles.join(", "),
+    });
+  }
+  // .whl files. Zip file containing dist-info directory
+  if (whlFiles && whlFiles.length) {
+    for (let wf of whlFiles) {
+      const mData = await utils.readZipEntry(wf, "METADATA");
+      if (mData) {
+        const dlist = utils.parseBdistMetadata(mData);
+        if (dlist && dlist.length) {
+          pkgList = pkgList.concat(dlist);
+        }
+      }
+    }
+    return buildBomNSData(pkgList, "pypi", {
+      src: path,
+      filename: whlFiles.join(", "),
     });
   }
   if (requirementsMode || pipenvMode || poetryMode || setupPyMode) {
@@ -1070,6 +1248,31 @@ const createPythonBom = async (path, options) => {
  */
 const createGoBom = async (path, options) => {
   let pkgList = [];
+  // Is this a binary file
+  let maybeBinary = false;
+  try {
+    maybeBinary = fs.statSync(path).isFile();
+  } catch (err) {
+    maybeBinary = false;
+  }
+  if (maybeBinary) {
+    const buildInfoData = binaryLib.getGoBuildInfo(path);
+    const dlist = await utils.parseGoVersionData(buildInfoData);
+    if (dlist && dlist.length) {
+      pkgList = pkgList.concat(dlist);
+    }
+    // Since this pkg list is derived from the binary mark them as used.
+    const allImports = {};
+    for (let mpkg of pkgList) {
+      let pkgFullName = `${mpkg.group}/${mpkg.name}`;
+      allImports[pkgFullName] = true;
+    }
+    return buildBomNSData(pkgList, "golang", {
+      allImports,
+      src: path,
+      filename: path,
+    });
+  }
 
   // Read in go.sum and merge all go.sum files.
   const gosumFiles = utils.getAllFiles(
@@ -1102,7 +1305,7 @@ const createGoBom = async (path, options) => {
   }
 
   // If USE_GOSUM is false, generate BOM components using go.mod.
-  gosumMap = {};
+  const gosumMap = {};
   if (gosumFiles.length) {
     for (let i in gosumFiles) {
       const f = gosumFiles[i];
@@ -1131,6 +1334,79 @@ const createGoBom = async (path, options) => {
     (options.multiProject ? "**/" : "") + "go.mod"
   );
   if (gomodFiles.length) {
+    // Use the go list -deps and go mod why commands to generate a good quality BoM for non-docker invocations
+    if (options.projectType !== "docker") {
+      console.log("Executing go list -deps in", path);
+      const result = spawnSync(
+        "go",
+        [
+          "list",
+          "-deps",
+          "-f",
+          "'{{with .Module}}{{.Path}} {{.Version}}{{end}}'",
+          "./...",
+        ],
+        { cwd: path, encoding: "utf-8", timeout: TIMEOUT_MS }
+      );
+      if (result.status == 1 || result.error) {
+        console.error(result.stdout, result.stderr);
+      }
+      const stdout = result.stdout;
+      if (stdout) {
+        const cmdOutput = Buffer.from(stdout).toString();
+        const dlist = await utils.parseGoListDep(cmdOutput, gosumMap);
+        if (dlist && dlist.length) {
+          pkgList = pkgList.concat(dlist);
+        }
+        const allImports = {};
+        let circuitBreak = false;
+        console.log(
+          `Attempting to detect required packages using "go mod why" command for ${pkgList.length} packages`
+        );
+        // Using go mod why detect required packages
+        for (let apkg of pkgList) {
+          if (circuitBreak) {
+            break;
+          }
+          let pkgFullName = `${apkg.group}/${apkg.name}`;
+          if (DEBUG_MODE) {
+            console.log(`go mod why -m -vendor ${pkgFullName}`);
+          }
+          const mresult = spawnSync(
+            "go",
+            ["mod", "why", "-m", "-vendor", pkgFullName],
+            { cwd: path, encoding: "utf-8", timeout: TIMEOUT_MS }
+          );
+          if (mresult.status == 1 || mresult.error) {
+            if (DEBUG_MODE) {
+              console.log(mresult.stdout, mresult.stderr);
+            }
+            circuitBreak = true;
+          } else {
+            const mstdout = mresult.stdout;
+            if (mstdout) {
+              const cmdOutput = Buffer.from(mstdout).toString();
+              let whyPkg = utils.parseGoModWhy(cmdOutput);
+              if (whyPkg == pkgFullName) {
+                allImports[pkgFullName] = true;
+              }
+            }
+          }
+        }
+        if (DEBUG_MODE) {
+          console.log(`Required packages: ${Object.keys(allImports).length}`);
+        }
+        return buildBomNSData(pkgList, "golang", {
+          allImports,
+          src: path,
+          filename: gomodFiles.join(", "),
+        });
+      }
+    }
+    // Parse the gomod files manually. The resultant BoM would be incomplete
+    console.log(
+      "Manually parsing go.mod files. The resultant BoM would be incomplete."
+    );
     for (let i in gomodFiles) {
       const f = gomodFiles[i];
       if (DEBUG_MODE) {
@@ -1192,7 +1468,6 @@ const createRustBom = async (path, options) => {
   if (cargoMode && !cargoLockMode) {
     for (let i in cargoFiles) {
       const f = cargoFiles[i];
-      const basePath = pathLib.dirname(f);
       if (DEBUG_MODE) {
         console.log(`Parsing ${f}`);
       }
@@ -1255,7 +1530,7 @@ const createPHPBom = async (path, options) => {
       const f = composerJsonFiles[i];
       const basePath = pathLib.dirname(f);
       console.log("Executing 'composer install' in", basePath);
-      result = spawnSync("composer", ["install"], {
+      const result = spawnSync("composer", ["install"], {
         cwd: basePath,
         encoding: "utf-8",
       });
@@ -1313,7 +1588,7 @@ const createRubyBom = async (path, options) => {
       const f = gemFiles[i];
       const basePath = pathLib.dirname(f);
       console.log("Executing 'bundle install' in", basePath);
-      result = spawnSync("bundle", ["install"], {
+      const result = spawnSync("bundle", ["install"], {
         cwd: basePath,
         encoding: "utf-8",
       });
@@ -1364,8 +1639,41 @@ const createCsharpBom = async (path, options) => {
     path,
     (options.multiProject ? "**/" : "") + "packages.config"
   );
+  const projAssetsFiles = utils.getAllFiles(
+    path,
+    (options.multiProject ? "**/" : "") + "project.assets.json"
+  );
+  const pkgLockFiles = utils.getAllFiles(
+    path,
+    (options.multiProject ? "**/" : "") + "packages.lock.json"
+  );
   let pkgList = [];
-  if (pkgConfigFiles.length) {
+  // project.assets.json parsing
+  if (projAssetsFiles.length) {
+    for (let af of projAssetsFiles) {
+      if (DEBUG_MODE) {
+        console.log(`Parsing ${af}`);
+      }
+      let pkgData = fs.readFileSync(af, { encoding: "utf-8" });
+      const dlist = await utils.parseCsProjAssetsData(pkgData);
+      if (dlist && dlist.length) {
+        pkgList = pkgList.concat(dlist);
+      }
+    }
+  } else if (pkgLockFiles.length) {
+    // packages.lock.json from nuget
+    for (let af of pkgLockFiles) {
+      if (DEBUG_MODE) {
+        console.log(`Parsing ${af}`);
+      }
+      let pkgData = fs.readFileSync(af, { encoding: "utf-8" });
+      const dlist = await utils.parseCsPkgLockData(pkgData);
+      if (dlist && dlist.length) {
+        pkgList = pkgList.concat(dlist);
+      }
+    }
+  } else if (pkgConfigFiles.length) {
+    // packages.config parsing
     for (let i in pkgConfigFiles) {
       const f = pkgConfigFiles[i];
       if (DEBUG_MODE) {
@@ -1381,6 +1689,7 @@ const createCsharpBom = async (path, options) => {
       }
     }
   } else if (csProjFiles.length) {
+    // .csproj parsing
     for (let i in csProjFiles) {
       const f = csProjFiles[i];
       if (DEBUG_MODE) {
@@ -1519,7 +1828,7 @@ const createMultiXBom = async (pathList, options) => {
     bomXml: buildBomXml(serialNum, components),
     bomJson: {
       bomFormat: "CycloneDX",
-      specVersion: "1.2",
+      specVersion: "1.3",
       serialNumber: serialNum,
       version: 1,
       metadata: addMetadata(),
@@ -1541,7 +1850,6 @@ const createXBom = async (path, options) => {
     console.error(path, "is invalid");
     process.exit(1);
   }
-  const { projectType } = options;
   // node.js - package.json
   if (
     fs.existsSync(pathLib.join(path, "package.json")) ||
@@ -1559,7 +1867,7 @@ const createXBom = async (path, options) => {
   // scala sbt
   let sbtFiles = utils.getAllFiles(
     path,
-    (options.multiProject ? "**/" : "") + "build.sbt*"
+    (options.multiProject ? "**/" : "") + "{build.sbt,Build.scala}*"
   );
   if (pomFiles.length || gradleFiles.length || sbtFiles.length) {
     return await createJavaBom(path, options);
@@ -1578,8 +1886,18 @@ const createXBom = async (path, options) => {
   const setupPy = pathLib.join(path, "setup.py");
   const requirementsMode =
     (reqFiles && reqFiles.length) || (reqDirFiles && reqDirFiles.length);
+  const whlFiles = utils.getAllFiles(
+    path,
+    (options.multiProject ? "**/" : "") + "*.whl"
+  );
   const setupPyMode = fs.existsSync(setupPy);
-  if (requirementsMode || pipenvMode || poetryMode || setupPyMode) {
+  if (
+    requirementsMode ||
+    pipenvMode ||
+    poetryMode ||
+    setupPyMode ||
+    whlFiles.length
+  ) {
     return await createPythonBom(path, options);
   }
   // go
@@ -1744,5 +2062,4 @@ exports.createBom = async (path, options) => {
     default:
       return await createXBom(path, options);
   }
-  return {};
 };

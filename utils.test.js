@@ -109,6 +109,14 @@ test("parse gradle dependencies", () => {
   });
 });
 
+test("parse gradle projects", () => {
+  expect(utils.parseGradleProjects(null)).toEqual([]);
+  let proj_list = utils.parseGradleProjects(
+    fs.readFileSync("./test/data/gradle-projects.out", (encoding = "utf-8"))
+  );
+  expect(proj_list.length).toEqual(8);
+});
+
 test("parse maven tree", () => {
   expect(utils.parseMavenTree(null)).toEqual([]);
   let dep_list = utils.parseMavenTree(
@@ -208,6 +216,7 @@ test("parseGoModData", async () => {
   const gosumMap = {
     "google.golang.org/grpc/v1.21.0":
       "sha256-oYelfM1adQP15Ek0mdvEgi9Df8B9CZIaU1084ijfRaM=",
+    "github.com/aws/aws-sdk-go/v1.38.47": "sha256-fake-sha-for-aws-go-sdk=",
     "github.com/spf13/cobra/v1.0.0":
       "sha256-/6GTrnGXV9HjY+aR4k0oJ5tcvakLuG6EuKReYlHNrgE=",
     "github.com/spf13/viper/v1.0.2":
@@ -220,22 +229,29 @@ test("parseGoModData", async () => {
     gosumMap
   );
   dep_list = moduleinfo.pkgComponentsList
-  expect(dep_list.length).toEqual(3);
+  expect(dep_list.length).toEqual(4);
   expect(dep_list[0]).toEqual({
+    group: "github.com/aws",
+    name: "aws-sdk-go",
+    license: undefined,
+    version: "v1.38.47",
+    _integrity: "sha256-fake-sha-for-aws-go-sdk=",
+  });
+  expect(dep_list[1]).toEqual({
     group: "github.com/spf13",
     name: "cobra",
     license: undefined,
     version: "v1.0.0",
     _integrity: "sha256-/6GTrnGXV9HjY+aR4k0oJ5tcvakLuG6EuKReYlHNrgE=",
   });
-  expect(dep_list[1]).toEqual({
+  expect(dep_list[2]).toEqual({
     group: "google.golang.org",
     name: "grpc",
     license: undefined,
     version: "v1.21.0",
     _integrity: "sha256-oYelfM1adQP15Ek0mdvEgi9Df8B9CZIaU1084ijfRaM=",
   });
-  expect(dep_list[2]).toEqual({
+  expect(dep_list[3]).toEqual({
     group: "github.com/spf13",
     name: "viper",
     license: undefined,
@@ -288,6 +304,30 @@ test("parseGoSumData", async () => {
   });
 });
 
+test("parse go list dependencies", async () => {
+  let dep_list = await utils.parseGoListDep(
+    fs.readFileSync("./test/data/golist-dep.txt", (encoding = "utf-8")),
+    {}
+  );
+  expect(dep_list.length).toEqual(8);
+  expect(dep_list[0]).toEqual({
+    group: "github.com/badoux",
+    name: "checkmail",
+    version: "v0.0.0-20181210160741-9661bd69e9ad",
+  });
+});
+
+test("parse go mod why dependencies", () => {
+  let pkg_name = utils.parseGoModWhy(
+    fs.readFileSync("./test/data/gomodwhy.txt", (encoding = "utf-8"))
+  );
+  expect(pkg_name).toEqual("github.com/mailgun/mailgun-go/v4");
+  pkg_name = utils.parseGoModWhy(
+    fs.readFileSync("./test/data/gomodwhynot.txt", (encoding = "utf-8"))
+  );
+  expect(pkg_name).toBeUndefined();
+});
+
 test("parseGopkgData", async () => {
   jest.setTimeout(120000);
   let dep_list = await utils.parseGopkgData(null);
@@ -313,6 +353,33 @@ test("parseGopkgData", async () => {
   });
 });
 
+test("parse go version data", async () => {
+  let dep_list = await utils.parseGoVersionData(
+    fs.readFileSync("./test/data/goversion.txt", (encoding = "utf-8")),
+    {}
+  );
+  expect(dep_list.length).toEqual(125);
+  expect(dep_list[0]).toEqual({
+    group: "github.com/ShiftLeftSecurity",
+    name: "atlassian-connect-go",
+    version: "v0.0.2",
+    _integrity: "",
+    license: undefined,
+  });
+  dep_list = await utils.parseGoVersionData(
+    fs.readFileSync("./test/data/goversion2.txt", (encoding = "utf-8")),
+    {}
+  );
+  expect(dep_list.length).toEqual(149);
+  expect(dep_list[0]).toEqual({
+    group: "cloud.google.com",
+    name: "go",
+    version: "v0.79.0",
+    _integrity: "sha256-oqqswrt4x6b9OGBnNqdssxBl1xf0rSUNjU2BR4BZar0=",
+    license: undefined,
+  });
+});
+
 test("parse cargo lock", async () => {
   expect(await utils.parseCargoData(null)).toEqual([]);
   dep_list = await utils.parseCargoData(
@@ -328,17 +395,18 @@ test("parse cargo lock", async () => {
   });
 });
 
-test("parse cargo tomml", async () => {
+test("parse cargo toml", async () => {
   expect(await utils.parseCargoTomlData(null)).toEqual([]);
   dep_list = await utils.parseCargoTomlData(
     fs.readFileSync("./test/data/Cargo1.toml", (encoding = "utf-8"))
   );
-  expect(dep_list.length).toEqual(1);
-  expect(dep_list[0]).toEqual({
-    group: "",
-    name: "unwind",
-    version: "0.0.0",
-  });
+  expect(dep_list.length).toEqual(4);
+  expect(dep_list).toEqual([
+    { group: "", name: "unwind", version: "0.0.0" },
+    { name: "libc", version: "0.2.79" },
+    { name: "compiler_builtins", version: "0.1.0" },
+    { name: "cfg-if", version: "0.1.8" },
+  ]);
 });
 
 test("get crates metadata", async () => {
@@ -404,6 +472,34 @@ test("parse cs proj", async () => {
     group: "",
     name: "Microsoft.AspNetCore.Mvc.NewtonsoftJson",
     version: "3.1.1",
+  });
+});
+
+test("parse project.assets.json", async () => {
+  expect(await utils.parseCsProjAssetsData(null)).toEqual([]);
+  const dep_list = await utils.parseCsProjAssetsData(
+    fs.readFileSync("./test/data/project.assets.json", (encoding = "utf-8"))
+  );
+  expect(dep_list.length).toEqual(142);
+  expect(dep_list[0]).toEqual({
+    group: "",
+    name: "Castle.Core",
+    version: "4.4.1",
+    _integrity:
+      "sha512-zanbjWC0Y05gbx4eGXkzVycOQqVOFVeCjVsDSyuao9P4mtN1w3WxxTo193NGC7j3o2u3AJRswaoC6hEbnGACnQ==",
+  });
+});
+
+test("parse packages.lock.json", async () => {
+  expect(await utils.parseCsPkgLockData(null)).toEqual([]);
+  const dep_list = await utils.parseCsPkgLockData(
+    fs.readFileSync("./test/data/packages.lock.json", (encoding = "utf-8"))
+  );
+  expect(dep_list.length).toEqual(14);
+  expect(dep_list[0]).toEqual({
+    group: "",
+    name: "Antlr",
+    version: "3.5.0.2",
   });
 });
 
@@ -747,6 +843,23 @@ test("parse wheel metadata", () => {
     homepage: { url: "https://github.com/adrienverge/yamllint" },
     license: "GPLv3",
     repository: { url: "https://github.com/adrienverge/yamllint" },
+  });
+});
+
+test("parse wheel", async () => {
+  let metadata = await utils.readZipEntry(
+    "./test/data/appthreat_depscan-2.0.2-py3-none-any.whl",
+    "METADATA"
+  );
+  expect(metadata);
+  const parsed = utils.parseBdistMetadata(metadata);
+  expect(parsed[0]).toEqual({
+    version: "2.0.2",
+    name: "appthreat-depscan",
+    description:
+      "Fully open-source security audit for project dependencies based on known vulnerabilities and advisories.",
+    homepage: { url: "https://github.com/appthreat/dep-scan" },
+    license: "UNKNOWN",
   });
 });
 
