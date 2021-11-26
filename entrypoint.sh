@@ -4,7 +4,7 @@ if [ ! -z "${INPUT_FETCH_LICENSES}" ]
 then
     echo "Detecting license information from dependencies"
 fi
-FETCH_LICENSE=${INPUT_FETCH_LICENSES} node /usr/local/bin/cdxgen $GITHUB_WORKSPACE -o $GITHUB_WORKSPACE/bom.json
+FETCH_LICENSE=${INPUT_FETCH_LICENSES} node /app/bin/cdxgen $GITHUB_WORKSPACE -o $GITHUB_WORKSPACE/bom.json
 
 cd $GITHUB_WORKSPACE
 remote=$(git remote show origin -n | grep Fetch | awk '{print $3}' | sed -e "s/https:\/\/github.com\///g"| sed -e "s/git@github.com://g"| sed -e "s/\.git//g")

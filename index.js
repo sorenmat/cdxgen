@@ -1,7 +1,6 @@
 const parsePackageJsonName = require("parse-packagejson-name");
 const os = require("os");
 const pathLib = require("path");
-const fetch = require('node-fetch');
 const ssri = require("ssri");
 const fs = require("fs");
 const { v4: uuidv4 } = require("uuid");
